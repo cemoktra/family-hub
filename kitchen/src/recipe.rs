@@ -99,6 +99,12 @@ pub enum RecipeError {
 }
 
 impl Recipe {
+    /// parse a recipe from an existing URL, tested to work with:
+    /// - chefkoch.de
+    /// - cookidoo.de
+    /// - kitchenstories.com
+    ///
+    /// but in general it should work with all websites containing the google recipe schema
     pub async fn from_url(url: Url) -> Result<Self, RecipeError> {
         let client = reqwest::Client::new();
 
