@@ -1,12 +1,14 @@
 //! This module handles downloading/parsing of google recipe schema:
 //! https://developers.google.com/search/docs/appearance/structured-data/recipe?hl=de
-//!
-use std::string::FromUtf8Error;
+
+use std::str::FromStr;
 
 use headers::Header;
 use iso8601::Duration;
 use serde::{Deserialize, Serialize};
 use url::Url;
+
+use crate::Error;
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 #[serde(untagged)]
@@ -84,20 +86,6 @@ pub struct Recipe {
     pub total_time: Option<Duration>,
 }
 
-#[derive(Debug, thiserror::Error)]
-pub enum RecipeError {
-    #[error(transparent)]
-    Reqwest(#[from] reqwest::Error),
-    #[error(transparent)]
-    Utf8(#[from] FromUtf8Error),
-    #[error(transparent)]
-    Scraper(Box<dyn core::error::Error>),
-    #[error("No recipe parsed")]
-    NoRecipe,
-    #[error(transparent)]
-    Json(#[from] serde_json::Error),
-}
-
 impl Recipe {
     /// parse a recipe from an existing URL, tested to work with:
     /// - chefkoch.de
@@ -105,7 +93,7 @@ impl Recipe {
     /// - kitchenstories.com
     ///
     /// but in general it should work with all websites containing the google recipe schema
-    pub async fn from_url(url: Url) -> Result<Self, RecipeError> {
+    pub async fn from_url(url: Url) -> Result<Option<Self>, Error> {
         let client = reqwest::Client::new();
 
         tracing::info!("receiving data from {url} ...");
@@ -126,21 +114,55 @@ impl Recipe {
         let document = scraper::Html::parse_document(&decoded);
 
         let selector = scraper::Selector::parse("script[type=\"application/ld+json\"]")
-            .map_err(|err| RecipeError::Scraper(Box::new(err)))?;
+            .map_err(|err| Error::Scraper(Box::new(err)))?;
 
         for element in document.select(&selector) {
             let inner = element.inner_html();
 
-            let deser = &mut serde_json::Deserializer::from_str(&inner);
-            match serde_path_to_error::deserialize(deser) {
-                //match serde_json::from_value(json) {
-                Ok(recipe) => return Ok(recipe),
+            match Self::from_str(&inner) {
+                Ok(recipe) => return Ok(Some(recipe)),
                 Err(err) => {
                     tracing::warn!("failed to parse json: {err} [{}]", err.path().to_string())
                 }
             }
         }
 
-        Err(RecipeError::NoRecipe)
+        Ok(None)
+    }
+}
+
+impl FromStr for Recipe {
+    type Err = serde_path_to_error::Error<serde_json::Error>;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        let deser = &mut serde_json::Deserializer::from_str(s);
+        Ok(serde_path_to_error::deserialize(deser)?)
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod test {
+    use std::str::FromStr;
+
+    pub(crate) fn test_recipe_str() -> String {
+        serde_json::to_string(&test_recipe()).unwrap()
+    }
+
+    fn test_recipe() -> serde_json::Value {
+        serde_json::json!(
+            {
+                "name": "Goulash",
+                "image": "https://upload.wikimedia.org/wikipedia/commons/thumb/4/49/Gulasch.jpg/1024px-Gulasch.jpg",
+                "keywords": "Goulash",
+                "recipeCuisine": ["Europe", "Hungary"],
+                "recipeIngredient": ["Beef", "Onion", "Paprika"],
+                "totalTime": "P0DT2H40M"
+            }
+        )
+    }
+
+    #[test]
+    fn test_from_str() {
+        assert!(super::Recipe::from_str(&test_recipe_str()).is_ok());
     }
 }
