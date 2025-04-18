@@ -4,9 +4,11 @@
 //! - [ ] weekly food plan referencing recipes
 //! - [ ] shopping list created from weekly food plan
 mod cooking_book;
+mod cooking_plan;
 mod error;
 mod recipe;
 
 pub use cooking_book::CookingBook;
+pub use cooking_plan::CookingPlan;
 pub use error::Error;
 pub use recipe::Recipe;
